@@ -38,6 +38,10 @@ class ClipIndexConfig:
     every_n_frames: int = 30
     only_when_tracking: bool = True
     bbox_padding: float = 0.15
+    # Hard rate-limit per track id, in seconds. A track is always embedded
+    # the first time we see it; thereafter we wait this long before
+    # re-embedding it, no matter how often `every_n_frames` fires.
+    min_seconds_between_embeds_per_track: float = 5.0
 
 
 @dataclass

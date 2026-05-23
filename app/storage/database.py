@@ -84,10 +84,10 @@ class Database:
             return
         ids, vecs = [], []
         for row in rows:
-            ids.append(row[0])
             v = np.frombuffer(row[1], dtype=np.float32)
             if v.shape[0] != self.embedding_dim:
                 continue
+            ids.append(row[0])
             vecs.append(v)
         if vecs:
             self._emb_ids = ids
@@ -203,11 +203,32 @@ class Database:
             results.append(row)
         return results
 
-    async def prune_older_than(self, days: int) -> int:
+    async def prune_older_than(self, days: int) -> tuple[int, list[str]]:
+        """Delete events older than `days`. Returns (rows_deleted, snapshot_paths).
+
+        Caller is responsible for unlinking the snapshot files on disk.
+        Also rebuilds the in-memory embedding index to drop pruned rows.
+        """
         assert self._conn is not None
         if days <= 0:
-            return 0
+            return 0, []
         cutoff = time.time() - days * 86400
+
+        async with self._conn.execute(
+            "SELECT snapshot_path FROM events WHERE ts < ?", (cutoff,)
+        ) as cur:
+            snap_rows = await cur.fetchall()
+        snapshots = [r[0] for r in snap_rows if r[0]]
+
         cur = await self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
         await self._conn.commit()
-        return cur.rowcount or 0
+        deleted = cur.rowcount or 0
+
+        if deleted > 0:
+            async with self._emb_lock:
+                # Cheap re-read of the embedding matrix from the (now smaller) DB.
+                self._emb_ids = []
+                self._emb_matrix = None
+            await self._load_embeddings()
+
+        return deleted, snapshots

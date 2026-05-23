@@ -17,6 +17,10 @@ cameras:
       min_hits: 3             # frames before a track is confirmed
     clip_index:
       enabled: true
-      every_n_frames: 30      # at 15fps, embed ~1 image every 2s
+      every_n_frames: 30      # at 15fps, embed at most every 2s per camera
       only_when_tracking: true
       bbox_padding: 0.15
+      # Per-track rate limit so a person who stands still doesn't fill the DB.
+      # First sighting of a track is always embedded; subsequent embeds wait
+      # at least this long.
+      min_seconds_between_embeds_per_track: 5.0

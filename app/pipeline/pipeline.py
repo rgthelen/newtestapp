@@ -74,6 +74,8 @@ class CameraPipeline:
         self._latest_jpeg: bytes = b""
         self._fps_window: deque[float] = deque(maxlen=60)
         self._tracked_ids_seen: set[int] = set()
+        # Per-track timestamp of last CLIP embedding (rate-limit dwelling tracks).
+        self._last_embed_at: dict[int, float] = {}
 
     @property
     def latest(self) -> Optional[PipelineSnapshot]:
@@ -180,16 +182,32 @@ class CameraPipeline:
             confirmed = self.tracker.update(detections)
         return detections, confirmed, inference_ms
 
+    # Max width for the JPEG we stream to browsers. 1080p source frames are
+    # downscaled to this width to keep MJPEG bandwidth manageable over WiFi
+    # / Tailscale. The original frame is still used for detection + CLIP.
+    OVERLAY_MAX_WIDTH = 960
+
     def _render_overlay_jpeg(
         self,
         frame_bgr: np.ndarray,
         detections: list[Detection],
         tracks: list[Track],
     ) -> bytes:
-        img = frame_bgr.copy()
-        # Tracks (with stable IDs) take priority over raw detections.
+        src_h, src_w = frame_bgr.shape[:2]
+        if src_w > self.OVERLAY_MAX_WIDTH:
+            scale = self.OVERLAY_MAX_WIDTH / src_w
+            new_w = self.OVERLAY_MAX_WIDTH
+            new_h = int(round(src_h * scale))
+            img = cv2.resize(frame_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            scale = 1.0
+            img = frame_bgr.copy()
+
         for t in tracks:
-            x1, y1, x2, y2 = (int(v) for v in t.bbox)
+            x1 = int(t.bbox[0] * scale)
+            y1 = int(t.bbox[1] * scale)
+            x2 = int(t.bbox[2] * scale)
+            y2 = int(t.bbox[3] * scale)
             color = _track_color(t.id)
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             label = f"#{t.id} {t.cls_name} {t.confidence:.2f}"
@@ -197,13 +215,13 @@ class CameraPipeline:
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
             )
             cv2.rectangle(
-                img, (x1, y1 - lh - bl - 4), (x1 + lw + 4, y1), color, -1
+                img, (x1, max(0, y1 - lh - bl - 4)), (x1 + lw + 4, y1), color, -1
             )
             cv2.putText(
-                img, label, (x1 + 2, y1 - 4),
+                img, label, (x1 + 2, max(lh, y1 - 4)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA,
             )
-        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
         return buf.tobytes() if ok else b""
 
     # ---- CLIP indexing ----------------------------------------------------
@@ -216,14 +234,24 @@ class CameraPipeline:
         if self.cfg.clip_index.only_when_tracking and not tracks:
             return
 
-        # For each confirmed track, embed the cropped bbox.
         loop = asyncio.get_running_loop()
+        now = frame.pts
+        min_gap = self.cfg.clip_index.min_seconds_between_embeds_per_track
+
         for t in tracks:
+            # Always log/embed first sighting of a track; thereafter rate-limit
+            # so a dwelling object doesn't fill the DB with duplicates.
+            is_new = t.id not in self._tracked_ids_seen
+            last = self._last_embed_at.get(t.id, 0.0)
+            if not is_new and (now - last) < min_gap:
+                continue
+
             crop = _crop_with_padding(
                 frame.image, t.bbox, padding=self.cfg.clip_index.bbox_padding
             )
             if crop.size == 0:
                 continue
+
             embedding = await loop.run_in_executor(
                 None, self.clip_image.encode, crop
             )
@@ -241,7 +269,8 @@ class CameraPipeline:
                 embedding=embedding,
             )
 
-            if t.id not in self._tracked_ids_seen:
+            self._last_embed_at[t.id] = now
+            if is_new:
                 self._tracked_ids_seen.add(t.id)
                 log.info(
                     "track.new",
@@ -249,6 +278,13 @@ class CameraPipeline:
                     track_id=t.id,
                     cls=t.cls_name,
                 )
+
+        # Garbage-collect rate-limit dict so it doesn't grow forever.
+        if len(self._last_embed_at) > 4096:
+            cutoff = now - 600
+            self._last_embed_at = {
+                k: v for k, v in self._last_embed_at.items() if v > cutoff
+            }
 
     def _snapshot_path(self, frame_idx: int, track_id: int, cls: str) -> Path:
         date = time.strftime("%Y%m%d")
@@ -286,6 +322,19 @@ def _write_jpeg(path: Path, img: np.ndarray) -> None:
     cv2.imwrite(str(path), img, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 
+def _prune_orphan_snapshots(root: Path, days: int) -> None:
+    """Delete .jpg files under `root` whose mtime is older than `days`."""
+    if days <= 0 or not root.exists():
+        return
+    cutoff = time.time() - days * 86400
+    for p in root.rglob("*.jpg"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            continue
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -300,6 +349,7 @@ class PipelineManager:
         self.clip_image: ClipImageEncoder | None = None
         self.clip_text: ClipTextEncoder | None = None
         self.pipelines: dict[str, CameraPipeline] = {}
+        self._retention_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         models_dir = self.cfg.paths.models_dir
@@ -347,12 +397,53 @@ class PipelineManager:
             await p.start()
             self.pipelines[cam_cfg.id] = p
 
+        if self.cfg.retention.event_days > 0:
+            self._retention_task = asyncio.create_task(
+                self._retention_loop(), name="retention"
+            )
+
         log.info(
             "pipeline_manager.started",
             cameras=list(self.pipelines.keys()),
+            retention_days=self.cfg.retention.event_days,
         )
 
+    async def _retention_loop(self) -> None:
+        # Run once on startup, then every 6h.
+        import os
+        while True:
+            try:
+                days = self.cfg.retention.event_days
+                deleted, snap_paths = await self.db.prune_older_than(days)
+                if deleted:
+                    log.info("retention.pruned_events", count=deleted, days=days)
+                snap_days = self.cfg.retention.snapshot_days or days
+                for path in snap_paths:
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        log.warning("retention.unlink_failed", path=path, error=str(e))
+                # Also prune snapshot files older than snap_days even if
+                # their db row is gone (orphans, e.g. from crashes).
+                _prune_orphan_snapshots(self.cfg.paths.snapshots_dir, snap_days)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:  # pragma: no cover
+                log.exception("retention.error", error=str(e))
+            try:
+                await asyncio.sleep(6 * 3600)
+            except asyncio.CancelledError:
+                return
+
     async def stop(self) -> None:
+        if self._retention_task:
+            self._retention_task.cancel()
+            try:
+                await self._retention_task
+            except (asyncio.CancelledError, Exception):
+                pass
         for p in self.pipelines.values():
             await p.stop()
         self.pipelines.clear()
@@ -360,6 +451,8 @@ class PipelineManager:
             self.yolo.close()
         if self.clip_image:
             self.clip_image.close()
+        if self.clip_text:
+            self.clip_text.close()
         if self._vdevice_ctx:
             self._vdevice_ctx.__exit__(None, None, None)
         log.info("pipeline_manager.stopped")
