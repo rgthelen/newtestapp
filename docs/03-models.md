@@ -1,58 +1,73 @@
-# 03 — Models (YOLO11s + CLIP)
+# 03 — Models (YOLO11s + CLIP ViT-B/16)
 
-We run two models on Hailo:
+All neural networks run on Hailo — nothing on the CPU except the tiny BPE
+tokenizer that turns query text into integer IDs.
 
 | Model | Purpose | Input | Source |
 |---|---|---|---|
-| `yolov11s.hef` | object detection (80 COCO classes) | 640×640 RGB | Hailo Model Zoo |
-| `clip_vit_base_patch32.hef` | image embedding for semantic search | 224×224 RGB | Hailo Model Zoo |
+| `yolov11s.hef` | object detection (80 COCO classes) | 640×640 RGB uint8 | Hailo Model Zoo |
+| `clip_vit_base_patch16_image.hef` | image embedding | 224×224 RGB uint8 | Hailo Model Zoo |
+| `clip_vit_base_patch16_text.hef` | text embedding | 77 token IDs uint16 | Hailo Model Zoo |
 
-CLIP text embeddings run on the Pi CPU (~30ms per query). Only the image
-encoder needs the Hailo accelerator.
-
-> **⚠ Embedding-space coupling**: CLIP image and text encoders only produce
+> **⚠ Embedding-space coupling**: the image and text encoders only produce
 > comparable embeddings if they come from the **same trained variant**. Our
-> defaults pair `openai/clip-vit-base-patch32` on both sides (512-d). If you
-> swap one, swap the other — the runtime will refuse to start if the dims
-> don't match.
+> defaults pair `openai/clip-vit-base-patch16` on both sides (512-d). If you
+> swap one, swap the other — the runtime has a startup probe that bails with
+> a clear error if the dims don't match.
 
 ## Download
 
-`scripts/04-download-models.sh` pulls HEFs from Hailo's CDN into `~/.local/share/pi5-hailo-vision/models/`:
+`scripts/04-download-models.sh` pulls all three HEFs + the BPE tokenizer JSON
+into `~/.local/share/pi5-hailo-vision/models/`:
 
 ```bash
 ./scripts/04-download-models.sh
 ```
 
-The script detects your hardware (`hailortcli fw-control identify`) and grabs:
+The script detects your hardware (`hailortcli fw-control identify`) and pulls
+the architecture-matched HEFs:
 
-- **Hailo-10H**: `hailo10h/yolov11s.hef`, `hailo10h/clip_vit_base_patch32.hef`
-- **Hailo-8**: `hailo8/yolov11s.hef`, `hailo8/clip_vit_base_patch32.hef`
-- **Hailo-8L**: `hailo8l/yolov11s.hef`, `hailo8l/clip_vit_base_patch32.hef`
-
-It also downloads the **CLIP text tokenizer + text encoder ONNX** (~50MB) that runs on the CPU via `onnxruntime`.
+- **Hailo-10H**: `hailo10h/yolov11s.hef`, `hailo10h/clip_vit_base_patch16_*.hef`
+- **Hailo-8**:   `hailo8/...`
+- **Hailo-8L**:  `hailo8l/...`
 
 ## Verify
 
 ```bash
+hailortcli parse-hef ~/.local/share/pi5-hailo-vision/models/clip_vit_base_patch16_text.hef
+hailortcli parse-hef ~/.local/share/pi5-hailo-vision/models/clip_vit_base_patch16_image.hef
 hailortcli parse-hef ~/.local/share/pi5-hailo-vision/models/yolov11s.hef
 ```
 
-Should print input shapes, output layers, and quantization info.
+Each command prints input shapes, output layers, and quantization info.
 
-Quick sanity inference:
+Quick sanity inference (YOLO):
 
 ```bash
 hailortcli run ~/.local/share/pi5-hailo-vision/models/yolov11s.hef \
   --measure-fps --batch-size 1
 ```
 
-You should see ~60-80 FPS on Hailo-10H, ~40-50 FPS on Hailo-8.
+Expected on Hailo-10H: ~60–80 FPS YOLO11s, ~250+ FPS for the CLIP text
+encoder, ~150+ FPS for the CLIP image encoder.
+
+## Manual fallback
+
+The Hailo Model Zoo S3 layout shifts between releases. If the script can't
+find the URL it expects:
+
+1. Browse the [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo)
+   for the matching `<arch>` HEFs (`clip_vit_base_patch16_image`,
+   `clip_vit_base_patch16_text`, `yolov11s`).
+2. Drop them in `~/.local/share/pi5-hailo-vision/models/` with the exact
+   filenames listed in the table above.
+3. Or override the filenames in `~/.config/pi5-hailo-vision/app.yaml` to
+   match whatever names you've used.
 
 ## Custom models
 
-Compile your own (custom YOLO retrained, etc.) using the
-[Hailo Dataflow Compiler](https://hailo.ai/developer-zone/) → drop the
-`.hef` in the models directory and point `config/models.yaml` at it.
+Compile your own (custom YOLO retrained, distilled CLIP, etc.) with the
+[Hailo Dataflow Compiler](https://hailo.ai/developer-zone/), drop the `.hef`
+in the models dir, and point `config/app.yaml` at it.
 
 Next: [04 — Tailscale](04-tailscale.md).

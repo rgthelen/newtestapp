@@ -37,10 +37,33 @@ except ImportError as e:  # pragma: no cover — only on dev machines
     _HAILO_IMPORT_ERROR = e
 
 
-class HailoModel:
-    """Single-HEF inference handle. Thread-safe via a lock."""
+# Map numpy dtypes to HailoRT FormatType so the wrapper works for both
+# image (uint8) and text (uint16 token IDs) HEFs.
+def _hailo_format_for_dtype(dtype: np.dtype) -> Any:
+    if dtype == np.uint8:
+        return FormatType.UINT8
+    if dtype == np.uint16:
+        return FormatType.UINT16
+    if dtype == np.float32:
+        return FormatType.FLOAT32
+    raise ValueError(f"no Hailo FormatType for numpy dtype {dtype}")
 
-    def __init__(self, hef_path: Path, vdevice: Any | None = None) -> None:
+
+class HailoModel:
+    """Single-HEF inference handle. Thread-safe via a lock.
+
+    Supports any HEF whose input dtype is uint8 / uint16 / float32. The
+    expected input numpy dtype is provided at construction so we can pick
+    the right FormatType (image encoders use uint8, CLIP text encoders use
+    uint16 token IDs).
+    """
+
+    def __init__(
+        self,
+        hef_path: Path,
+        vdevice: Any | None = None,
+        input_dtype: np.dtype = np.dtype(np.uint8),
+    ) -> None:
         if not _HAILO_AVAILABLE:
             raise RuntimeError(
                 f"hailo_platform not available — was python3-hailort installed "
@@ -51,6 +74,7 @@ class HailoModel:
             raise FileNotFoundError(f"HEF not found: {hef_path}")
 
         self.hef_path = hef_path
+        self.input_dtype = input_dtype
         self._lock = threading.Lock()
 
         # Allow sharing a VDevice across multiple models for concurrency.
@@ -68,42 +92,43 @@ class HailoModel:
         self.output_vstream_info = self.hef.get_output_vstream_infos()
 
         self.input_params = InputVStreamParams.make(
-            self.network_group, format_type=FormatType.UINT8
+            self.network_group, format_type=_hailo_format_for_dtype(input_dtype)
         )
         self.output_params = OutputVStreamParams.make(
             self.network_group, format_type=FormatType.FLOAT32
         )
 
-        # Cache the single input name (we only support single-input HEFs).
         if len(self.input_vstream_info) != 1:
             raise ValueError(
                 f"{hef_path.name}: expected 1 input stream, got "
                 f"{len(self.input_vstream_info)}"
             )
         self.input_name = self.input_vstream_info[0].name
-        h, w, c = self.input_vstream_info[0].shape
-        self.input_shape = (h, w, c)
+        self.input_shape = tuple(self.input_vstream_info[0].shape)
         log.info(
             "hailo.model.loaded",
             hef=hef_path.name,
             input_shape=self.input_shape,
+            input_dtype=str(input_dtype),
             outputs=[o.name for o in self.output_vstream_info],
         )
 
-    def infer(self, image_uint8: np.ndarray) -> dict[str, np.ndarray]:
-        """Run inference on a single uint8 HxWxC image.
+    def infer(self, x: np.ndarray) -> dict[str, np.ndarray]:
+        """Run inference on a single (un-batched) input.
 
-        Returns dict of {output_name -> float32 ndarray}.
+        Returns dict of {output_name -> float32 ndarray} with the batch
+        dim stripped.
         """
-        if image_uint8.dtype != np.uint8:
-            raise ValueError(f"input must be uint8, got {image_uint8.dtype}")
-        if image_uint8.shape != self.input_shape:
+        if x.dtype != self.input_dtype:
             raise ValueError(
-                f"input shape {image_uint8.shape} != HEF input {self.input_shape}"
+                f"input dtype {x.dtype} != HEF dtype {self.input_dtype}"
+            )
+        if tuple(x.shape) != self.input_shape:
+            raise ValueError(
+                f"input shape {x.shape} != HEF input {self.input_shape}"
             )
 
-        # HailoRT expects a batched array: NHWC.
-        batched = np.expand_dims(image_uint8, axis=0)
+        batched = np.expand_dims(x, axis=0)
 
         with self._lock:
             with InferVStreams(
@@ -112,7 +137,6 @@ class HailoModel:
                 with self.network_group.activate(self.network_group_params):
                     raw = infer_pipeline.infer({self.input_name: batched})
 
-        # Strip the batch dim from each output.
         return {k: v[0] for k, v in raw.items()}
 
     def close(self) -> None:

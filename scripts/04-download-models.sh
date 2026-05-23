@@ -29,8 +29,9 @@ RELEASE="v2.13.0"
 
 declare -A HEFS=(
     [yolov11s.hef]="${HAILO_MZ_BASE}/${RELEASE}/${ARCH}/yolov11s.hef"
-    # Must match the text encoder embedding space — see config/app.example.yaml
-    [clip_vit_base_patch32.hef]="${HAILO_MZ_BASE}/${RELEASE}/${ARCH}/clip_vit_base_patch32.hef"
+    # CLIP ViT-B/16 image + text encoders — must be the matching pair.
+    [clip_vit_base_patch16_image.hef]="${HAILO_MZ_BASE}/${RELEASE}/${ARCH}/clip_vit_base_patch16_image.hef"
+    [clip_vit_base_patch16_text.hef]="${HAILO_MZ_BASE}/${RELEASE}/${ARCH}/clip_vit_base_patch16_text.hef"
 )
 
 for name in "${!HEFS[@]}"; do
@@ -56,23 +57,16 @@ EOF
     fi
 done
 
-# --- CLIP text encoder (CPU, ONNX) ------------------------------------------
-TEXT_ENC="$MODELS_DIR/clip_text_encoder.onnx"
+# --- CLIP BPE tokenizer (CPU, JSON — converts text to token IDs) ------------
+# The tokenizer is part of openai/clip-vit-base-patch16 on Hugging Face and is
+# identical to ViT-B/32's tokenizer (same vocab). We use Xenova's mirror which
+# exposes a single `tokenizer.json` file in HF tokenizers format.
 TEXT_TOK="$MODELS_DIR/clip_tokenizer.json"
-
-if [[ ! -f "$TEXT_ENC" ]]; then
-    echo "    [pull] clip_text_encoder.onnx"
-    # Sentence-transformers exports of OpenAI CLIP text encoders are available
-    # in ONNX form from Hugging Face under the `Xenova/clip-vit-base-patch32`
-    # repo (Apache-2.0).
-    curl -fSL --retry 3 -o "$TEXT_ENC" \
-        "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/text_model_quantized.onnx"
-fi
 
 if [[ ! -f "$TEXT_TOK" ]]; then
     echo "    [pull] clip_tokenizer.json"
     curl -fSL --retry 3 -o "$TEXT_TOK" \
-        "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/tokenizer.json"
+        "https://huggingface.co/Xenova/clip-vit-base-patch16/resolve/main/tokenizer.json"
 fi
 
 echo "    models in $MODELS_DIR:"

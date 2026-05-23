@@ -317,8 +317,9 @@ class PipelineManager:
             vdevice=vdev,
         )
         self.clip_text = ClipTextEncoder(
-            onnx_path=models_dir / self.cfg.models.clip.text_onnx,
+            hef_path=models_dir / self.cfg.models.clip.text_hef,
             tokenizer_path=models_dir / self.cfg.models.clip.text_tokenizer,
+            vdevice=vdev,
         )
 
         # Sanity: image + text encoders must share an embedding space.

@@ -75,11 +75,12 @@ class YoloModelConfig:
 
 @dataclass
 class ClipModelConfig:
-    # Defaults match openai/clip-vit-base-patch32 (image + text encoders are
-    # in the same 512-d space). If you change one, change them all.
-    image_hef: str = "clip_vit_base_patch32.hef"
+    # Defaults: openai/clip-vit-base-patch16 (ViT-B/16). Both image and text
+    # encoders run on Hailo as HEFs. 512-d shared embedding space.
+    # If you change one HEF, change the matching pair AND the tokenizer.
+    image_hef: str = "clip_vit_base_patch16_image.hef"
     image_input_size: tuple[int, int] = (224, 224)
-    text_onnx: str = "clip_text_encoder.onnx"
+    text_hef: str = "clip_vit_base_patch16_text.hef"
     text_tokenizer: str = "clip_tokenizer.json"
     embedding_dim: int = 512
 
@@ -159,7 +160,7 @@ def load_config() -> AppConfig:
                 image_input_size=tuple(
                     clip.get("image_input_size", cfg.models.clip.image_input_size)
                 ),
-                text_onnx=clip.get("text_onnx", cfg.models.clip.text_onnx),
+                text_hef=clip.get("text_hef", cfg.models.clip.text_hef),
                 text_tokenizer=clip.get("text_tokenizer", cfg.models.clip.text_tokenizer),
                 embedding_dim=int(clip.get("embedding_dim", cfg.models.clip.embedding_dim)),
             )
