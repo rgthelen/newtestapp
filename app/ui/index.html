@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pi5-hailo-vision</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="dot"></span>
+      <strong>pi5-hailo-vision</strong>
+    </div>
+    <nav>
+      <a href="#/live"     class="nav-link" data-view="live">Live</a>
+      <a href="#/search"   class="nav-link" data-view="search">Search</a>
+      <a href="#/events"   class="nav-link" data-view="events">Events</a>
+    </nav>
+    <div class="status" id="globalStatus">…</div>
+  </header>
+
+  <main id="view"></main>
+
+  <template id="tpl-live">
+    <section class="view">
+      <div class="toolbar">
+        <h2>Live</h2>
+        <span class="cam-count" data-bind="camCount"></span>
+      </div>
+      <div class="grid" data-bind="grid"></div>
+    </section>
+  </template>
+
+  <template id="tpl-search">
+    <section class="view">
+      <div class="toolbar">
+        <h2>Search</h2>
+        <form class="search-form" data-bind="searchForm">
+          <input type="search" name="q" placeholder='Try: "a person carrying a package", "a white truck at night"…' autocomplete="off" autofocus>
+          <button type="submit">Search</button>
+        </form>
+      </div>
+      <p class="hint">Powered by CLIP embeddings — semantic similarity across every snapshot the system has captured.</p>
+      <div class="results" data-bind="results"></div>
+    </section>
+  </template>
+
+  <template id="tpl-events">
+    <section class="view">
+      <div class="toolbar">
+        <h2>Events</h2>
+        <select data-bind="cameraFilter"><option value="">all cameras</option></select>
+        <select data-bind="classFilter">
+          <option value="">all classes</option>
+          <option>person</option><option>car</option><option>truck</option>
+          <option>motorcycle</option><option>bicycle</option>
+          <option>dog</option><option>cat</option>
+        </select>
+      </div>
+      <div class="results" data-bind="results"></div>
+    </section>
+  </template>
+
+  <template id="tpl-camera-tile">
+    <div class="cam">
+      <div class="cam-head">
+        <span class="cam-name" data-bind="name"></span>
+        <span class="cam-stats" data-bind="stats"></span>
+      </div>
+      <div class="cam-canvas">
+        <img data-bind="img" alt="">
+        <svg data-bind="overlay"></svg>
+      </div>
+    </div>
+  </template>
+
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>

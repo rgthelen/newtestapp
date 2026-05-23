@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# local artifacts (also live in ~/.local on the Pi, but in case anyone runs
+# the app from a checkout)
+*.db
+*.db-journal
+snapshots/
+logs/
+models/
+*.hef
+*.onnx
+
+# editor / OS noise
+.vscode/
+.idea/
+.DS_Store

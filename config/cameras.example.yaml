@@ -1,0 +1,22 @@
+# Copy to ~/.config/pi5-hailo-vision/cameras.yaml and edit.
+# See docs/05-cameras.md for vendor URL patterns.
+
+cameras:
+  - id: example_cam
+    name: Example Camera
+    url: rtsp://user:pass@192.168.1.20:554/Streaming/Channels/102
+    transport: tcp            # tcp | udp
+    fps: 15                   # target FPS to pull
+    detect:
+      enabled: true
+      min_confidence: 0.45
+      classes: [person, car, truck, motorcycle, bicycle, dog, cat]
+    track:
+      enabled: true
+      max_age: 30             # frames a track can be lost before deletion
+      min_hits: 3             # frames before a track is confirmed
+    clip_index:
+      enabled: true
+      every_n_frames: 30      # at 15fps, embed ~1 image every 2s
+      only_when_tracking: true
+      bbox_padding: 0.15

@@ -1,0 +1,30 @@
+# hailo_platform comes from the system `python3-hailort` package (--system-site-packages).
+# Everything else is pip-installable.
+
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# Vision / inference
+numpy>=1.26,<2.2
+opencv-python-headless==4.10.0.84
+pillow==11.0.0
+onnxruntime==1.20.1            # CLIP text encoder on CPU
+
+# Tracking
+lap==0.5.12                    # Hungarian matching for ByteTrack/SORT
+scipy>=1.13                    # used by trackers + similarity utils
+
+# RTSP / streaming
+av==13.1.0                     # PyAV — better than OpenCV's VideoCapture for RTSP
+
+# Storage
+aiosqlite==0.20.0
+
+# Tokenizer for CLIP text encoder
+tokenizers==0.20.3
+
+# Tooling
+PyYAML==6.0.2
+structlog==24.4.0

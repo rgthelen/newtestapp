@@ -1,0 +1,26 @@
+[Unit]
+Description=pi5-hailo-vision — Hailo YOLO + CLIP multi-camera service
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@REPO@
+Environment=PYTHONUNBUFFERED=1
+Environment=PI5_VISION_CONFIG_DIR=@HOME@/.config/pi5-hailo-vision
+ExecStart=@REPO@/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=15
+
+# Hardening — relaxed enough that the Hailo PCI device is accessible.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@HOME@/.local @HOME@/.config
+
+[Install]
+WantedBy=multi-user.target

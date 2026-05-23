@@ -1,0 +1,39 @@
+# Global app config. ~/.config/pi5-hailo-vision/app.yaml
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+paths:
+  # Where HEFs + ONNX live
+  models_dir: ~/.local/share/pi5-hailo-vision/models
+  # Snapshots (jpgs of tracked objects)
+  snapshots_dir: ~/.local/share/pi5-hailo-vision/snapshots
+  # SQLite db with detections, tracks, events, embeddings
+  db_path: ~/.local/share/pi5-hailo-vision/events.db
+  # Structured JSON logs
+  log_dir: ~/.local/state/pi5-hailo-vision/logs
+
+models:
+  yolo:
+    hef: yolov11s.hef
+    input_size: [640, 640]
+    # COCO class names — the order MUST match how the HEF was compiled.
+    # YOLO Model Zoo HEFs are compiled against COCO80 in the standard order.
+  clip:
+    # IMPORTANT: image_hef and text_onnx MUST come from the same CLIP variant
+    # (same embedding space). Defaults below = openai/clip-vit-base-patch32:
+    #   ViT-B/32 image  -> 224x224 input, 512-d output
+    #   ViT-B/32 text   -> 77-token context, 512-d output
+    # Switching to a different variant (e.g. RN50x4) requires updating ALL
+    # four fields here AND re-downloading matching HEF + ONNX.
+    image_hef: clip_vit_base_patch32.hef
+    image_input_size: [224, 224]
+    text_onnx: clip_text_encoder.onnx
+    text_tokenizer: clip_tokenizer.json
+    embedding_dim: 512
+
+retention:
+  # Keep snapshots / embeddings for N days. 0 = forever.
+  snapshot_days: 14
+  event_days: 30
