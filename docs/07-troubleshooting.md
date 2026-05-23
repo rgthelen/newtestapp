@@ -2,25 +2,64 @@
 
 ## Hailo
 
+**One-shot diagnostic dump**
+```bash
+./scripts/check-hailo.sh
+```
+Prints lspci, link speed, dmesg, kernel module + DKMS, /dev/hailo0,
+hailortcli identify, package versions, and HEFs — in one screen. Run this
+first.
+
 **`hailortcli fw-control identify` says "no device found"**
 ```bash
-lspci | grep -i hailo            # device visible on PCIe?
+lspci -d 1e60:                   # device visible on PCIe?
 sudo dmesg | grep -i hailo       # firmware load errors?
-sudo modprobe hailo_pci          # driver loaded?
+lsmod | grep hailo               # driver loaded?
 ```
-99% of "no device" reports are PCIe Gen3 cabling/seating — re-seat the FFC
-ribbon and confirm `dtparam=pciex1_gen=3` is in `/boot/firmware/config.txt`.
 
-**HailoRT can't allocate VStreams**
+Common causes, in order of frequency:
+
+1. **Forgot to reboot** after `dtparam=pciex1_gen=3` was added — the link
+   only renegotiates on a cold boot.
+2. **EEPROM is old**. Run `sudo rpi-eeprom-update -a && sudo reboot`. Pi 5
+   firmware before ~Sep 2024 has PCIe Gen3 stability bugs that show up as
+   intermittent "device disappeared" errors.
+3. **FFC ribbon reversed or unseated**. Power off, re-seat both ends. The
+   blue tab faces the same direction on both sides of the ribbon.
+4. **Linked at Gen2 instead of Gen3** — `sudo lspci -vv -d 1e60: | grep
+   LnkSta` should show `8GT/s`. If `5GT/s`, `dtparam=pciex1_gen=3` isn't
+   taking effect (typo, wrong file, didn't reboot).
+5. **3rd-party M.2 carrier** (Pineboards, etc.). The official Pi M.2
+   HAT+ Just Works; some 3rd-party HATs need a vendor-specific dtoverlay
+   in `config.txt`. Check the HAT vendor's docs.
+6. **DKMS didn't rebuild** after a kernel upgrade. Fix:
+   ```bash
+   sudo dkms autoinstall
+   sudo reboot
+   ```
+
+**HailoRT version too old for Hailo-10H**
+The H10 needs HailoRT ≥ 4.18. Pi's apt repo can lag — see
+[docs/02-hailo-install.md](02-hailo-install.md) for the manual .deb
+upgrade path.
+
+**HailoRT can't allocate VStreams** / "device busy"
 Another process owns the device. Find it:
 ```bash
 sudo lsof /dev/hailo0
 ```
 Our service holds the device exclusively — stop it before running
-`hailortcli run` manually:
+`hailortcli run` or anything else against the device:
 ```bash
 sudo systemctl stop pi5-hailo-vision
 ```
+
+**`/dev/hailo0` is owned by root and not user-readable**
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+ls -l /dev/hailo0     # should be crw-rw-rw-
+```
+If the udev rule is missing entirely, reinstall: `sudo apt install --reinstall hailo-pci-dkms`.
 
 ## RTSP
 
